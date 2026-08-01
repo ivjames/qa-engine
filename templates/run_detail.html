@@ -12,6 +12,10 @@
   .back-link:hover{color:var(--accent-strong);}
   .dh-sevs{display:flex;gap:6px;flex-wrap:wrap;}
 
+  .dh-sevs .sev-pill{cursor:pointer;transition:opacity .15s,border-color .15s;}
+  .dh-sevs .sev-pill:hover{border-color:var(--text-faint);}
+  .dh-sevs .sev-pill.off{opacity:.35;text-decoration:line-through;}
+
   .issues-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
   .issues-head b{font-size:14px;}
   .issues-head .ih-hint{font-size:11.5px;color:var(--text-faint);}
@@ -104,7 +108,8 @@
         {% set n = counts.get(sev, 0) %}
         {% if n %}
           {% set ns.any = true %}
-          <span class="sev-pill" data-sev="{{ sev }}"><span class="n">{{ n }}</span>{{ sev }}</span>
+          <button type="button" class="sev-pill" data-sev="{{ sev }}" aria-pressed="true"
+                  title="Toggle {{ sev }} issues"><span class="n">{{ n }}</span>{{ sev }}</button>
         {% endif %}
       {% endfor %}
       {% if not ns.any %}<span class="sev-none">no findings</span>{% endif %}
@@ -113,8 +118,9 @@
 
   <div class="issues-head">
     <b>{{ groups|length }} distinct issue{{ '' if groups|length == 1 else 's' }}</b>
-    <span class="ih-hint">Grouped by rule across all scanned pages, worst severity first.</span>
+    <span class="ih-hint">Grouped by rule across all scanned pages, worst severity first. Click the severity pills above to filter.</span>
   </div>
+  <p class="empty-hint" id="filterAllHidden" style="display:none">All issues are hidden by the severity filter — click the pills above to re-enable tiers.</p>
 
   {% if groups %}
     {% for g in groups %}
@@ -154,4 +160,28 @@
     <div class="panel"><p class="empty-hint">This run recorded no findings.</p></div>
   {% endif %}
 
+<script>
+(function(){
+  "use strict";
+  var pills = document.querySelectorAll(".dh-sevs .sev-pill");
+  var cards = document.querySelectorAll(".g-card");
+  var hint = document.getElementById("filterAllHidden");
+  var off = {};
+  pills.forEach(function(pill){
+    pill.addEventListener("click", function(){
+      var sev = pill.getAttribute("data-sev");
+      off[sev] = !off[sev];
+      pill.classList.toggle("off", !!off[sev]);
+      pill.setAttribute("aria-pressed", off[sev] ? "false" : "true");
+      var visible = 0;
+      cards.forEach(function(card){
+        var show = !off[card.getAttribute("data-sev")];
+        card.style.display = show ? "" : "none";
+        if (show) visible++;
+      });
+      if (hint) hint.style.display = (cards.length && !visible) ? "" : "none";
+    });
+  });
+})();
+</script>
 {% endblock %}
