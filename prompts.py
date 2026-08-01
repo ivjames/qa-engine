@@ -15,6 +15,12 @@ def rubric(name: str) -> str:
 
 _SEVERITY_ENUM = ["info", "minor", "moderate", "serious", "critical"]
 
+# NOTE: the structured-output API (output_config.format json_schema) requires
+# every "object" node to set "additionalProperties": false explicitly — a
+# schema without it is rejected with a 400 before the model ever runs. That
+# also rules out free-form objects, so evidence is a fixed set of optional
+# string fields rather than an open dict.
+
 # Tier-1 triage output (Haiku). Matches rubrics/triage.md.
 TRIAGE_SCHEMA = {
     "type": "object",
@@ -35,10 +41,12 @@ TRIAGE_SCHEMA = {
                     "ref", "pipeline", "worth_deep_review",
                     "severity", "confidence", "reason",
                 ],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["items"],
+    "additionalProperties": False,
 }
 
 # Tier-2 deep-review / vision output (Sonnet). Wrapped in an object (top-level
@@ -55,12 +63,22 @@ DEEP_REVIEW_SCHEMA = {
                     "severity": {"type": "string", "enum": _SEVERITY_ENUM},
                     "title": {"type": "string"},
                     "detail": {"type": "string"},
-                    "evidence": {"type": "object"},
+                    "evidence": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "string"},
+                            "snippet": {"type": "string"},
+                            "note": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
                     "escalate": {"type": "boolean"},
                 },
                 "required": ["rule", "severity", "title", "detail"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["findings"],
+    "additionalProperties": False,
 }
