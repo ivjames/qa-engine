@@ -415,21 +415,18 @@
 
         <div class="tab-panel" id="panel-page">
           <label class="field-label" for="pageUrl">Seed URL</label>
-          <input id="pageUrl" type="url" placeholder="https://example.com" value="https://example.com" autocomplete="off">
+          <input id="pageUrl" type="url" placeholder="https://artificialatheist.com" value="https://artificialatheist.com" autocomplete="off">
         </div>
 
         <div class="tab-panel hidden" id="panel-flow">
           <label class="field-label" for="flowSpec">Flow spec (JSON)</label>
           <textarea id="flowSpec" spellcheck="false">{
-  "start_url": "https://example.com/login",
-  "name": "Login and check dashboard",
+  "start_url": "https://artificialatheist.com",
+  "name": "Browse home page",
   "steps": [
-    {"action": "goto", "url": "https://example.com/login"},
-    {"action": "fill", "selector": "#email", "value": "demo@example.com"},
-    {"action": "fill", "selector": "#password", "value": "hunter2"},
-    {"action": "click", "selector": "button[type=submit]"},
+    {"action": "goto", "url": "https://artificialatheist.com"},
     {"action": "wait", "ms": 1000},
-    {"action": "screenshot", "name": "post-login"}
+    {"action": "screenshot", "name": "home"}
   ]
 }</textarea>
         </div>
