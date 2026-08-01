@@ -6,3 +6,4 @@ node_modules/
 data/*
 !data/.gitkeep
 .pytest_cache/
+tests/fixtures/_smoke.db*
