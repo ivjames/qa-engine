@@ -105,9 +105,12 @@
     border:1px solid var(--border);
     background:var(--panel-2);
     font-size:11.5px;font-weight:500;color:var(--text-dim);
-    cursor:default;user-select:none;
-    transition:background .2s,border-color .2s,color .2s;
+    cursor:pointer;user-select:none;
+    transition:background .2s,border-color .2s,color .2s,opacity .2s;
   }
+  .tally-pill:hover{border-color:var(--text-faint);}
+  .tally-pill.off{opacity:.35;}
+  .tally-pill.off .tp-label{text-decoration:line-through;}
   .tally-pill .tc{font-family:var(--font-mono);font-weight:600;font-size:12px;color:var(--text-faint);min-width:1ch;text-align:right;}
   .tally-pill[data-sev="critical"].lit{border-color:var(--sev-critical);background:var(--sev-critical-bg);color:var(--sev-critical);}
   .tally-pill[data-sev="serious"].lit{border-color:var(--sev-serious);background:var(--sev-serious-bg);color:var(--sev-serious);}
@@ -115,6 +118,13 @@
   .tally-pill[data-sev="minor"].lit{border-color:var(--sev-minor);background:var(--sev-minor-bg);color:var(--sev-minor);}
   .tally-pill[data-sev="info"].lit{border-color:var(--sev-info);background:var(--sev-info-bg);color:var(--sev-info);}
   .tally-pill.lit .tc{color:inherit;}
+
+  .topbar-link{
+    font-size:12.5px;font-weight:600;color:var(--text-dim);text-decoration:none;
+    padding:5px 10px;border-radius:7px;white-space:nowrap;
+    transition:color .15s,background .15s;
+  }
+  .topbar-link:hover{color:var(--accent-strong);background:var(--accent-dim);}
 
   /* ---------- layout ---------- */
   .layout{
@@ -374,6 +384,7 @@
     transition:color .15s,border-color .15s;
   }
   .export-btn:hover{color:var(--accent-strong);border-color:var(--accent);}
+  a.export-btn{text-decoration:none;display:inline-flex;align-items:center;}
 
   @media (max-width:900px){
     .layout{grid-template-columns:1fr;}
@@ -396,12 +407,13 @@
       <div class="brand"><span class="brand-mark">◆</span>QA Engine</div>
       <div class="run-meta" id="runMeta"><span class="run-meta-empty">No run yet</span></div>
       <div class="tally" id="tally">
-        <div class="tally-pill" data-sev="critical"><span class="tc" data-count>0</span>Critical</div>
-        <div class="tally-pill" data-sev="serious"><span class="tc" data-count>0</span>Serious</div>
-        <div class="tally-pill" data-sev="moderate"><span class="tc" data-count>0</span>Moderate</div>
-        <div class="tally-pill" data-sev="minor"><span class="tc" data-count>0</span>Minor</div>
-        <div class="tally-pill" data-sev="info"><span class="tc" data-count>0</span>Info</div>
+        <button type="button" class="tally-pill" data-sev="critical" aria-pressed="true" title="Toggle critical findings"><span class="tc" data-count>0</span><span class="tp-label">Critical</span></button>
+        <button type="button" class="tally-pill" data-sev="serious" aria-pressed="true" title="Toggle serious findings"><span class="tc" data-count>0</span><span class="tp-label">Serious</span></button>
+        <button type="button" class="tally-pill" data-sev="moderate" aria-pressed="true" title="Toggle moderate findings"><span class="tc" data-count>0</span><span class="tp-label">Moderate</span></button>
+        <button type="button" class="tally-pill" data-sev="minor" aria-pressed="true" title="Toggle minor findings"><span class="tc" data-count>0</span><span class="tp-label">Minor</span></button>
+        <button type="button" class="tally-pill" data-sev="info" aria-pressed="true" title="Toggle info findings"><span class="tc" data-count>0</span><span class="tp-label">Info</span></button>
       </div>
+      <a class="topbar-link" href="/runs">History</a>
     </div>
   </header>
 
@@ -512,6 +524,9 @@
   var currentKind = null;
   var stageEls = {};
   var severityCounts = {critical:0, serious:0, moderate:0, minor:0, info:0};
+  // Which severity tiers are shown. Toggled by clicking the tally pills;
+  // deliberately survives across runs within the session.
+  var sevFilter = {critical:true, serious:true, moderate:true, minor:true, info:true};
   // Everything received over SSE for the current run, kept for export.
   var runRecord = null;
 
@@ -562,6 +577,8 @@
     errorsCount.textContent = "0";
     severityCounts = {critical:0, serious:0, moderate:0, minor:0, info:0};
     updateTally();
+    filterHintEl = null; // its node was just cleared with the findings list
+    applySevFilter();
     runRecord = {kind:null, target:null, run_id:null, status:null, stats:null,
                  findings:[], errors:[]};
   }
@@ -579,6 +596,42 @@
       pill.classList.toggle("lit", n > 0);
     });
   }
+
+  /* ---------------- severity filter (tally pills are toggles) ---------------- */
+  var filterHintEl = null;
+
+  function applySevFilter(){
+    tallyEl.querySelectorAll(".tally-pill").forEach(function(pill){
+      var sev = pill.getAttribute("data-sev");
+      var on = sevFilter[sev] !== false;
+      pill.classList.toggle("off", !on);
+      pill.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    var cards = findingsEl.querySelectorAll(".f-card");
+    var visible = 0;
+    cards.forEach(function(card){
+      var on = sevFilter[card.getAttribute("data-sev")] !== false;
+      card.style.display = on ? "" : "none";
+      if (on) visible++;
+    });
+    if (filterHintEl && filterHintEl.parentNode){
+      filterHintEl.parentNode.removeChild(filterHintEl);
+    }
+    if (cards.length && !visible){
+      filterHintEl = h("p", {class:"empty-hint"}, [
+        "All " + fmtNum(cards.length) + " findings are hidden by the severity filter — click the pills above to re-enable tiers."
+      ]);
+      findingsEl.appendChild(filterHintEl);
+    }
+  }
+
+  tallyEl.querySelectorAll(".tally-pill").forEach(function(pill){
+    pill.addEventListener("click", function(){
+      var sev = pill.getAttribute("data-sev");
+      sevFilter[sev] = sevFilter[sev] === false;
+      applySevFilter();
+    });
+  });
 
   function setRunMeta(kind, target, runId){
     clearChildren(runMeta);
@@ -723,6 +776,9 @@
     }
 
     findingsEl.appendChild(card);
+    // Re-apply when the new card lands in a hidden tier, or when the
+    // "everything hidden" hint is up and this card just invalidated it.
+    if (sevFilter[sev] === false || filterHintEl) applySevFilter();
   }
 
   function onErrorRow(data, fatal){
@@ -762,9 +818,13 @@
     var csvBtn = h("button", {class:"export-btn", type:"button", text:"Export CSV"});
     jsonBtn.addEventListener("click", exportJSON);
     csvBtn.addEventListener("click", exportCSV);
+    var actions = [jsonBtn, csvBtn];
+    if (data.run_id){
+      actions.push(h("a", {class:"export-btn", href:"/runs/" + encodeURIComponent(String(data.run_id)), text:"View in history"}));
+    }
     var head = h("div", {class:"done-bar-head"}, [
       h("span", {class:"db-status" + (isError ? " status-error" : "")}, [(isError ? "✕ " : "✓ ") + "Run " + status]),
-      h("div", {class:"db-actions"}, [jsonBtn, csvBtn])
+      h("div", {class:"db-actions"}, actions)
     ]);
     doneBar.appendChild(head);
 

@@ -48,6 +48,46 @@ If the boot hook was never installed on this droplet, do it once (survives
 reboot): `pm2 startup systemd -u root --hp /root` then run the line it prints;
 confirm `systemctl is-enabled pm2-root` → enabled.
 
+## Locking it down (nginx basic auth — REQUIRED)
+
+The app itself has **no auth**, and the hostname is not a secret: every TLS
+cert lands in public Certificate Transparency logs, so assume the subdomain is
+known to scanners. Unauthenticated, a visitor can spend Anthropic API budget
+and aim the crawler at arbitrary third-party URLs (`POST /api/run/*`), read
+the full findings history for our own sites (`/runs`), and delete runs. The
+fix lives in nginx, not the app — operator-only tools on this droplet get
+vhost-level basic auth:
+
+```bash
+# 1. Credentials file (htpasswd ships with apache2-utils).
+apt-get install -y apache2-utils
+htpasswd -c /etc/nginx/htpasswd-qa-engine ivan     # prompts for a password
+
+# 2. Edit the vhost provision-site wrote (sites-available/qa-engine…).
+#    Inside the server{} block add:
+#
+#      auth_basic "qa-engine";
+#      auth_basic_user_file /etc/nginx/htpasswd-qa-engine;
+#
+#      # health check stays open for probes — duplicate the proxy_* lines
+#      # from the main location / block here:
+#      location = /healthz {
+#          auth_basic off;
+#          proxy_pass http://127.0.0.1:8044;
+#      }
+
+# 3. Validate + reload, then verify both sides of the gate.
+nginx -t && systemctl reload nginx
+curl -s -o /dev/null -w '%{http_code}\n' https://qa-engine.lab980.com/        # 401
+curl -s https://qa-engine.lab980.com/healthz                                  # 200, no auth
+curl -su ivan https://qa-engine.lab980.com/runs -o /dev/null -w '%{http_code}\n'  # 200
+```
+
+Browsers cache the credentials for the session and attach them to same-origin
+`fetch()` calls, so the SSE run UI works unchanged behind the gate. There are
+no webhooks or cross-origin callers on this app, so nothing else needs an
+exemption.
+
 ## Redeploying
 
 ```bash
