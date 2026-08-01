@@ -1,20 +1,21 @@
-"""Per-page pipeline: crawl -> Tier 0 (deterministic) -> content-hash cache ->
-Tier 1 Haiku triage -> Tier 2 Sonnet deep review -> persist. Yields event
-dicts (see pipelines.format_frame for the SSE contract).
+"""Per-page pipeline: crawl -> Tier 0 (deterministic) -> Tier 1 Haiku triage
+-> Tier 2 Sonnet deep review. Yields event dicts (see pipelines.format_frame
+for the SSE contract). Every run reviews fresh — there is deliberately no
+cross-run result cache, so the run history at /runs always reflects the site
+as it was at scan time (a DOM-keyed cache used to replay stale security/perf
+findings after non-DOM fixes).
 
 Async generator: awaits the Playwright crawler and axe injection; Lighthouse
 (a blocking subprocess) is run in an executor. The Flask layer drives this in
 a worker-thread event loop (see pipelines.stream_async)."""
 
 import asyncio
-import hashlib
 import time
-from urllib.parse import urlsplit, urlunsplit
 
 import config
 import db
 from crawler import crawl, launch_browser
-from digest import digest_hash, semantic_skeleton
+from digest import semantic_skeleton
 from models import Models
 from playwright.async_api import async_playwright
 from prompts import DEEP_REVIEW_SCHEMA, TRIAGE_SCHEMA, rubric
@@ -23,15 +24,6 @@ from tier0.ux import run_lighthouse
 from tier0.wcag import run_axe
 
 _RUBRIC_FILE = {"wcag": "wcag.md", "security": "owasp.md"}
-
-
-def _norm_url(url: str) -> str:
-    parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "", ""))
-
-
-def _cache_key(url: str, dom_hash: str) -> str:
-    return hashlib.sha256(f"{_norm_url(url)}\n{dom_hash}".encode()).hexdigest()
 
 
 def _finding_event(finding: dict, fid) -> dict:
@@ -73,7 +65,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
     models = Models()
 
     stats = {
-        "pages": 0, "templates": 0, "cache_hits": 0,
+        "pages": 0, "templates": 0,
         "findings_by_severity": {}, "duration_secs": 0,
         "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
         "tokens_by_model": {},
@@ -87,7 +79,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
     yield {"type": "run_start", "run_id": run_id, "kind": "page",
            "target": seed_url, "ts": started}
 
-    # template_key -> {url, dom_hash, tier0, skeleton, findings, cache_key}
+    # template_key -> {template_id, url, tier0, skeleton, findings}
     templates: dict[str, dict] = {}
     loop = asyncio.get_event_loop()
 
@@ -112,17 +104,6 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
 
                 stats["templates"] += 1
                 skeleton = semantic_skeleton(unit.html, unit.url)
-                dom_hash = digest_hash(skeleton)
-                ckey = _cache_key(unit.url, dom_hash)
-
-                cached = db.cache_get(ckey)
-                if cached and cached.get("findings") is not None:
-                    stats["cache_hits"] += 1
-                    for f in cached["findings"]:
-                        fid = db.add_finding(run_id, f)
-                        _tally(f)
-                        yield _finding_event(f, fid)
-                    continue
 
                 # ---- Tier 0 (deterministic, free) ----
                 tier0: list[dict] = []
@@ -148,8 +129,9 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                     yield _finding_event(f, fid)
 
                 templates[unit.template_id] = {
-                    "url": unit.url, "dom_hash": dom_hash, "skeleton": skeleton,
-                    "tier0": tier0, "findings": template_findings, "cache_key": ckey,
+                    "template_id": unit.template_id, "url": unit.url,
+                    "skeleton": skeleton, "tier0": tier0,
+                    "findings": template_findings,
                 }
         finally:
             await browser.close()
@@ -185,7 +167,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                 r = results.get(f"t{i}")
                 if r:
                     _add_usage(stats, r.usage, config.MODEL_TIER1)
-                    triage_verdicts[t["cache_key"]] = (r.parsed or {}).get("items", [])
+                    triage_verdicts[t["template_id"]] = (r.parsed or {}).get("items", [])
         else:
             for t in triage_targets:
                 r = models.call(
@@ -193,13 +175,13 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                     user_content=triage_user(t), max_tokens=config.TIER1_MAX_TOKENS,
                     thinking=config.TIER1_THINKING, json_schema=TRIAGE_SCHEMA)
                 _add_usage(stats, r.usage, config.MODEL_TIER1)
-                triage_verdicts[t["cache_key"]] = (r.parsed or {}).get("items", [])
+                triage_verdicts[t["template_id"]] = (r.parsed or {}).get("items", [])
         yield {"type": "stage", "stage": "triage", "status": "end"}
 
     # ---- Tier 2: Sonnet deep review on escalated items ----
     escalations = []  # (template, item)
     for t in triage_targets:
-        for item in triage_verdicts.get(t["cache_key"], []):
+        for item in triage_verdicts.get(t["template_id"], []):
             if _escalates(item):
                 escalations.append((t, item))
 
@@ -253,13 +235,6 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                 t["findings"].append(finding)
                 yield _finding_event(finding, fid)
         yield {"type": "stage", "stage": "deep_review", "status": "end"}
-
-    # ---- persist cache rows for each freshly-reviewed template ----
-    yield {"type": "stage", "stage": "persist", "status": "start"}
-    for t in templates.values():
-        db.cache_put(t["cache_key"], t["url"], t["dom_hash"],
-                     t["tier0"], t["findings"], 0)
-    yield {"type": "stage", "stage": "persist", "status": "end"}
 
     stats["estimated_cost_usd"] = config.estimate_cost_usd(stats["tokens_by_model"])
     stats["duration_secs"] = round(time.time() - started, 2)

@@ -41,8 +41,6 @@ BATCH_THRESHOLD = 8         # > this many units in a stage -> use Batch API
 BATCH_POLL_SECS = 5
 BATCH_MAX_WAIT_SECS = 1200
 
-# ---- cache ----
-CACHE_TTL_SECS = 7 * 24 * 3600  # page_cache freshness window
 
 # ---- pricing (USD per 1M tokens: input, output) ----
 # List prices as of 2026-08. Cache reads bill at ~0.1x input, cache writes at

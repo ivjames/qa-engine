@@ -720,7 +720,7 @@
 
     var badges = [];
     if (data.template_id) badges.push(h("span", {class:"pl-badge"}, ["template " + data.template_id]));
-    if (data.cached) badges.push(h("span", {class:"pl-badge"}, ["cached"]));
+    if (data.cached) badges.push(h("span", {class:"pl-badge"}, ["seen template"]));
     if (badges.length) progressLine.appendChild(h("div", {class:"pl-badges"}, badges));
 
     if (data.screenshot){
