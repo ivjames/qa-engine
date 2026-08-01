@@ -1,5 +1,3 @@
-import time
-
 import pytest
 
 import config
@@ -155,57 +153,13 @@ def test_run_findings_empty_for_unknown_run():
     assert db.run_findings("no-such-run") == []
 
 
-def test_cache_put_and_get_round_trip():
-    tier0 = {"score": 0.8, "issues": ["contrast"]}
-    findings = [{"rule": "contrast", "severity": "moderate"}]
-    db.cache_put("key-1", "https://example.com/", "hash-abc", tier0, findings, 512)
-
-    cached = db.cache_get("key-1")
-    assert cached is not None
-    assert cached["url"] == "https://example.com/"
-    assert cached["dom_hash"] == "hash-abc"
-    assert cached["tier0"] == tier0
-    assert cached["findings"] == findings
-    assert cached["tokens"] == 512
-    assert cached["created_at"] is not None
-
-
-def test_cache_get_missing_key_returns_none():
-    assert db.cache_get("nope") is None
-
-
-def test_cache_upsert_replaces_existing_row():
-    db.cache_put("key-2", "https://example.com/a", "hash-1", {"v": 1}, [], 10)
-    db.cache_put("key-2", "https://example.com/b", "hash-2", {"v": 2}, [{"x": 1}], 20)
-
-    cached = db.cache_get("key-2")
-    assert cached["url"] == "https://example.com/b"
-    assert cached["dom_hash"] == "hash-2"
-    assert cached["tier0"] == {"v": 2}
-    assert cached["findings"] == [{"x": 1}]
-    assert cached["tokens"] == 20
-
+def test_init_db_drops_legacy_page_cache_table():
+    # Simulate a pre-history DB that still carries the removed cache table.
     conn = db._get_conn()
-    rows = conn.execute(
-        "SELECT COUNT(*) AS n FROM page_cache WHERE cache_key = ?", ("key-2",)
-    ).fetchall()
-    assert rows[0]["n"] == 1
-
-
-def test_cache_ttl_expiry(monkeypatch):
-    monkeypatch.setattr(config, "CACHE_TTL_SECS", 5)
-    db.cache_put("key-3", "https://example.com/", "hash-x", {}, [], 1)
-
-    # Still fresh right after writing.
-    assert db.cache_get("key-3") is not None
-
-    # Force the stored created_at into the past, beyond the TTL window.
-    conn = db._get_conn()
-    stale_time = time.time() - 100
-    conn.execute(
-        "UPDATE page_cache SET created_at = ? WHERE cache_key = ?",
-        (stale_time, "key-3"),
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS page_cache (cache_key TEXT PRIMARY KEY)")
     conn.commit()
-
-    assert db.cache_get("key-3") is None
+    db.init_db()
+    rows = db._get_conn().execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='page_cache'"
+    ).fetchall()
+    assert rows == []

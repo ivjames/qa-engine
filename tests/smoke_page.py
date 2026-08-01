@@ -3,7 +3,8 @@
 Serves tests/fixtures over http.server, runs the SSE page pipeline against
 sample.html, and asserts: crawl+template dedup happened, Tier-0 findings were
 produced (axe + security), the SSE frame order is sane, and a SECOND run over
-the same content is a cache hit (no re-review). Run:
+the same content reviews fresh (no cross-run cache — history must reflect
+scan-time reality). Run:
 
     MOCK_MODELS=1 .venv/bin/python -m tests.smoke_page
 """
@@ -89,15 +90,20 @@ def main():
         assert done["pages"] >= 1
         first_findings = len(findings)
 
-        # SECOND run: identical content -> cache hit, findings replayed, no
-        # fresh review. cache_hits must be > 0.
+        # SECOND run: identical content -> a full fresh review (the cross-run
+        # cache is gone), producing its own findings again.
         events2 = _collect(sse_page(seed, spec))
         done2 = events2[-1][1]["stats"]
-        assert done2["cache_hits"] >= 1, f"expected cache hit, got {done2}"
+        findings2 = [e[1] for e in events2 if e[0] == "finding"]
+        assert "cache_hits" not in done2, f"cache stat resurfaced: {done2}"
+        assert len(findings2) == first_findings, (
+            f"fresh re-review should reproduce findings: "
+            f"{len(findings2)} vs {first_findings}")
+        assert done2["templates"] == done["templates"]
 
         print(f"OK  frames={len(events)}  findings={first_findings}  "
               f"templates={done['templates']} pages={done['pages']} "
-              f"pipelines={sorted(pipelines)}  cache_hits(2nd run)={done2['cache_hits']}")
+              f"pipelines={sorted(pipelines)}  fresh 2nd run findings={len(findings2)}")
     finally:
         httpd.shutdown()
 

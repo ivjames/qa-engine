@@ -47,15 +47,9 @@ CREATE TABLE IF NOT EXISTS findings (
 
 CREATE INDEX IF NOT EXISTS idx_findings_run_id ON findings (run_id);
 
-CREATE TABLE IF NOT EXISTS page_cache (
-    cache_key TEXT PRIMARY KEY,
-    url TEXT,
-    dom_hash TEXT,
-    tier0_json TEXT,
-    findings_json TEXT,
-    tokens INTEGER,
-    created_at REAL
-);
+-- The cross-run page_cache was removed (runs always review fresh so /runs
+-- history reflects scan-time reality); drop the dead table from older DBs.
+DROP TABLE IF EXISTS page_cache;
 """
 
 
@@ -309,49 +303,6 @@ def run_findings(run_id):
 
 
 # ---------------------------------------------------------------------
-# page_cache
-# ---------------------------------------------------------------------
-
-def cache_get(cache_key):
-    with _lock:
-        conn = _get_conn()
-        row = conn.execute(
-            "SELECT * FROM page_cache WHERE cache_key = ?", (cache_key,)
-        ).fetchone()
-    if row is None:
-        return None
-    if time.time() - row["created_at"] > config.CACHE_TTL_SECS:
-        return None
-    return {
-        "url": row["url"],
-        "dom_hash": row["dom_hash"],
-        "tier0": json.loads(row["tier0_json"]) if row["tier0_json"] is not None else None,
-        "findings": json.loads(row["findings_json"]) if row["findings_json"] is not None else None,
-        "tokens": row["tokens"],
-        "created_at": row["created_at"],
-    }
-
-
-def cache_put(cache_key, url, dom_hash, tier0, findings, tokens):
-    with _lock:
-        conn = _get_conn()
-        conn.execute(
-            "INSERT OR REPLACE INTO page_cache (cache_key, url, dom_hash, "
-            "tier0_json, findings_json, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                cache_key,
-                url,
-                dom_hash,
-                json.dumps(tier0),
-                json.dumps(findings),
-                tokens,
-                time.time(),
-            ),
-        )
-        conn.commit()
-
-
-# ---------------------------------------------------------------------
 # smoke test
 # ---------------------------------------------------------------------
 
@@ -368,16 +319,6 @@ if __name__ == "__main__":
     assert len(run_id) == 12
     created_run_id = create_run("scan", "https://example.com", {"depth": 2}, run_id=run_id)
     assert created_run_id == run_id
-
-    tier0 = {"score": 0.9}
-    findings = [{"rule": "contrast", "severity": "moderate"}]
-    cache_key = "smoke-key-1"
-    cache_put(cache_key, "https://example.com/", "hash-abc", tier0, findings, 128)
-    cached = cache_get(cache_key)
-    assert cached is not None, "cache_get returned None right after cache_put"
-    assert cached["tier0"] == tier0
-    assert cached["findings"] == findings
-    assert cached["tokens"] == 128
 
     finding_id = add_finding(run_id, {
         "url": "https://example.com/",
