@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>QA Engine Sample Page</title>
+  <style>.low { color: #bbb; background: #ccc; }</style>
+</head>
+<body>
+  <header>
+    <nav aria-label="Main">
+      <a href="/">Home</a>
+      <a href="/products">Products</a>
+      <a href="/about">About</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Sample Products</h1>
+    <p class="low">This low-contrast paragraph should trip axe color-contrast.</p>
+
+    <!-- planted accessibility issues -->
+    <img src="/img/widget.png">
+    <form>
+      <input type="text" name="q" placeholder="Search">
+      <button type="submit">Go</button>
+    </form>
+
+    <!-- repeated cards: should collapse to one template -->
+    <section class="cards">
+      <div class="card"><h3>Widget A</h3><a href="/p/1">View</a></div>
+      <div class="card"><h3>Widget B</h3><a href="/p/2">View</a></div>
+      <div class="card"><h3>Widget C</h3><a href="/p/3">View</a></div>
+      <div class="card"><h3>Widget D</h3><a href="/p/4">View</a></div>
+    </section>
+
+    <!-- planted secret for the security scanner -->
+    <script type="application/json">
+      {"config": {"aws_key": "AKIAIOSFODNN7EXAMPLE"}}
+    </script>
+
+    <a href="second.html">Next page</a>
+  </main>
+  <footer><p>Sample footer</p></footer>
+</body>
+</html>

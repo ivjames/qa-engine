@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# qa-engine operate CLI (lab980 convention). Symlinked to /usr/local/bin/qa-engine.
+#   qa-engine redeploy   git pull -> deps -> browser -> pm2 restart
+#   qa-engine restart    pm2 restart qa-engine
+#   qa-engine logs       tail pm2 logs
+#   qa-engine backup     tar the SQLite db + screenshots into data/backups/
+set -euo pipefail
+
+APP_DIR="/var/www/qa-engine"
+NAME="qa-engine"
+cd "$APP_DIR"
+
+case "${1:-}" in
+  redeploy)
+    echo "==> git pull"
+    git pull --ff-only
+    echo "==> python deps"
+    .venv/bin/pip install -q -r requirements.txt
+    echo "==> node deps (lighthouse)"
+    npm install --no-audit --no-fund
+    echo "==> playwright chromium"
+    .venv/bin/playwright install chromium
+    echo "==> pm2 restart $NAME"
+    pm2 restart "$NAME" --update-env
+    pm2 save
+    echo "==> done"
+    ;;
+  restart)
+    pm2 restart "$NAME" --update-env
+    ;;
+  logs)
+    shift || true
+    pm2 logs "$NAME" "$@"
+    ;;
+  backup)
+    ts="$(date +%Y%m%d-%H%M%S)"
+    mkdir -p data/backups
+    out="data/backups/${NAME}-${ts}.tar.gz"
+    # WAL-checkpoint the db so the .db file is self-contained, then archive.
+    if [ -f data/qa.db ]; then
+      .venv/bin/python - <<'PY' || true
+import sqlite3, os
+if os.path.exists("data/qa.db"):
+    c = sqlite3.connect("data/qa.db"); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.close()
+PY
+    fi
+    tar -czf "$out" \
+      $( [ -f data/qa.db ] && echo data/qa.db ) \
+      $( [ -d data/screenshots ] && echo data/screenshots ) 2>/dev/null || true
+    echo "backup -> $out"
+    ;;
+  *)
+    echo "usage: qa-engine {redeploy|restart|logs|backup}" >&2
+    exit 1
+    ;;
+esac

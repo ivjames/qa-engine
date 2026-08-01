@@ -1,0 +1,8 @@
+{
+  "name": "qa-engine-tools",
+  "private": true,
+  "description": "Node-side tooling for qa-engine (Lighthouse CLI used by tier0/ux.py)",
+  "dependencies": {
+    "lighthouse": "^11.7.1"
+  }
+}
