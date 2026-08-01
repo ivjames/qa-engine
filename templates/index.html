@@ -349,6 +349,31 @@
   }
   .warn-row .w-icon{flex:0 0 auto;font-weight:700;}
   .warn-row .w-body b{font-family:var(--font-mono);text-transform:uppercase;font-size:10px;letter-spacing:.4px;opacity:.85;}
+  .warn-row.fatal-row{background:var(--sev-critical-bg);border-color:var(--sev-critical);color:#ffd7dd;}
+
+  /* ---------- errors panel ---------- */
+  .errors-panel.hidden{display:none;}
+  .errors-panel h3{display:flex;align-items:center;gap:8px;}
+  .errors-count{
+    font-family:var(--font-mono);font-size:10.5px;font-weight:600;
+    color:var(--sev-moderate);background:var(--sev-moderate-bg);
+    border:1px solid var(--sev-moderate);
+    padding:1px 7px;border-radius:999px;letter-spacing:0;
+  }
+  .errors-list{
+    max-height:230px;overflow:auto;
+    display:flex;flex-direction:column;gap:8px;
+  }
+
+  /* ---------- export ---------- */
+  .db-actions{margin-left:auto;display:flex;gap:8px;}
+  .export-btn{
+    padding:6px 12px;border-radius:7px;cursor:pointer;
+    border:1px solid var(--border);background:var(--panel-2);
+    color:var(--text-dim);font-size:11.5px;font-weight:600;
+    transition:color .15s,border-color .15s;
+  }
+  .export-btn:hover{color:var(--accent-strong);border-color:var(--accent);}
 
   @media (max-width:900px){
     .layout{grid-template-columns:1fr;}
@@ -428,6 +453,10 @@
 
     <main class="main">
       <div class="done-bar hidden" id="doneBar"></div>
+      <div class="panel errors-panel hidden" id="errorsPanel">
+        <h3>Errors <span class="errors-count" id="errorsCount">0</span></h3>
+        <div class="errors-list scroll-box" id="errorsList"></div>
+      </div>
       <div class="findings scroll-box" id="findings">
         <p class="empty-hint" id="findingsEmpty">Findings will stream in here once a run starts.</p>
       </div>
@@ -486,6 +515,8 @@
   var currentKind = null;
   var stageEls = {};
   var severityCounts = {critical:0, serious:0, moderate:0, minor:0, info:0};
+  // Everything received over SSE for the current run, kept for export.
+  var runRecord = null;
 
   /* ---------------- element refs ---------------- */
   var runBtn = document.getElementById("runBtn");
@@ -500,6 +531,9 @@
   var doneBar = document.getElementById("doneBar");
   var runMeta = document.getElementById("runMeta");
   var tallyEl = document.getElementById("tally");
+  var errorsPanel = document.getElementById("errorsPanel");
+  var errorsList = document.getElementById("errorsList");
+  var errorsCount = document.getElementById("errorsCount");
 
   /* ---------------- tabs ---------------- */
   document.querySelectorAll(".tab").forEach(function(btn){
@@ -526,8 +560,13 @@
     findingsEl.appendChild(findingsEmpty);
     doneBar.classList.add("hidden");
     clearChildren(doneBar);
+    errorsPanel.classList.add("hidden");
+    clearChildren(errorsList);
+    errorsCount.textContent = "0";
     severityCounts = {critical:0, serious:0, moderate:0, minor:0, info:0};
     updateTally();
+    runRecord = {kind:null, target:null, run_id:null, status:null, stats:null,
+                 findings:[], errors:[]};
   }
 
   function setRunning(isRunning){
@@ -649,6 +688,7 @@
 
   function onFinding(data){
     data = data || {};
+    if (runRecord) runRecord.findings.push(data);
     if (findingsEmpty && findingsEmpty.parentNode) findingsEmpty.parentNode.removeChild(findingsEmpty);
 
     var sev = (data.severity || "info").toLowerCase();
@@ -688,19 +728,21 @@
     findingsEl.appendChild(card);
   }
 
-  function onWarnRow(data){
+  function onErrorRow(data, fatal){
     data = data || {};
-    if (findingsEmpty && findingsEmpty.parentNode) findingsEmpty.parentNode.removeChild(findingsEmpty);
     var scope = data.scope ? String(data.scope) : "page";
-    var row = h("div", {class:"warn-row"}, [
-      h("span", {class:"w-icon"}, ["⚠"]),
+    var row = h("div", {class:"warn-row" + (fatal ? " fatal-row" : "")}, [
+      h("span", {class:"w-icon"}, [fatal ? "✕" : "⚠"]),
       h("span", {class:"w-body"}, [
         h("b", {}, [scope + "  "]),
         String(data.message || "An error occurred."),
         data.url ? h("span", {class:"mono"}, ["  (" + String(data.url) + ")"]) : null
       ])
     ]);
-    findingsEl.appendChild(row);
+    errorsPanel.classList.remove("hidden");
+    errorsList.appendChild(row);
+    errorsCount.textContent = fmtNum(errorsList.children.length);
+    errorsList.scrollTop = errorsList.scrollHeight;
   }
 
   /* ---------------- done bar ---------------- */
@@ -708,14 +750,24 @@
     data = data || {};
     markAllStagesDone();
     setRunMeta(currentKind, runMeta.querySelector(".rm-target") ? runMeta.querySelector(".rm-target").textContent : null, data.run_id);
+    if (runRecord){
+      runRecord.status = data.status || "ok";
+      runRecord.stats = data.stats || {};
+      if (data.run_id) runRecord.run_id = data.run_id;
+    }
 
     clearChildren(doneBar);
     doneBar.classList.remove("hidden");
 
     var status = data.status || "ok";
     var isError = /error|fail/i.test(String(status));
+    var jsonBtn = h("button", {class:"export-btn", type:"button", text:"Export JSON"});
+    var csvBtn = h("button", {class:"export-btn", type:"button", text:"Export CSV"});
+    jsonBtn.addEventListener("click", exportJSON);
+    csvBtn.addEventListener("click", exportCSV);
     var head = h("div", {class:"done-bar-head"}, [
       h("span", {class:"db-status" + (isError ? " status-error" : "")}, [(isError ? "✕ " : "✓ ") + "Run " + status]),
+      h("div", {class:"db-actions"}, [jsonBtn, csvBtn])
     ]);
     doneBar.appendChild(head);
 
@@ -733,16 +785,63 @@
     Object.keys(stats).forEach(function(key){
       var val = stats[key];
       if (val === null || typeof val === "object") return; // skip nested/unrenderable
-      var display = val;
-      if (knownDurationKeys.indexOf(key) >= 0) display = fmtDuration(val);
+      var display = val, label = prettyKey(key);
+      if (key === "estimated_cost_usd"){
+        display = "$" + (typeof val === "number" ? val.toFixed(4) : String(val));
+        label = "Est. Cost";
+      }
+      else if (knownDurationKeys.indexOf(key) >= 0) display = fmtDuration(val);
       else if (typeof val === "number") display = fmtNum(val);
       grid.appendChild(h("div", {class:"db-chip"}, [
         h("b", {}, [String(display)]),
-        prettyKey(key)
+        label
       ]));
     });
 
     doneBar.appendChild(grid);
+  }
+
+  /* ---------------- export ---------------- */
+  function downloadBlob(name, mime, text){
+    var blob = new Blob([text], {type: mime});
+    var url = URL.createObjectURL(blob);
+    var a = h("a", {href: url, download: name});
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  function exportName(ext){
+    var id = (runRecord && runRecord.run_id) ? String(runRecord.run_id).slice(0, 12) : "run";
+    return "qa-" + ((runRecord && runRecord.kind) || "run") + "-" + id + "." + ext;
+  }
+  function exportJSON(){
+    if (!runRecord) return;
+    downloadBlob(exportName("json"), "application/json", JSON.stringify({
+      exported_at: new Date().toISOString(),
+      kind: runRecord.kind,
+      target: runRecord.target,
+      run_id: runRecord.run_id,
+      status: runRecord.status,
+      stats: runRecord.stats,
+      findings: runRecord.findings,
+      errors: runRecord.errors
+    }, null, 2));
+  }
+  function csvCell(v){
+    if (v === undefined || v === null) return "";
+    var s = (typeof v === "object") ? JSON.stringify(v) : String(v);
+    if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function exportCSV(){
+    if (!runRecord) return;
+    var cols = ["severity", "pipeline", "tier", "rule", "title", "detail", "url", "evidence"];
+    var lines = [cols.join(",")];
+    runRecord.findings.forEach(function(f){
+      lines.push(cols.map(function(c){ return csvCell(f[c]); }).join(","));
+    });
+    downloadBlob(exportName("csv"), "text/csv", lines.join("\r\n"));
   }
 
   /* ---------------- SSE frame parsing ---------------- */
@@ -773,6 +872,11 @@
       case "run_start": {
         var d = parsed.data || {};
         currentKind = d.kind || currentKind;
+        if (runRecord){
+          runRecord.kind = d.kind || runRecord.kind;
+          runRecord.target = d.target || runRecord.target;
+          runRecord.run_id = d.run_id || runRecord.run_id;
+        }
         setRunMeta(d.kind, d.target, d.run_id);
         break;
       }
@@ -781,11 +885,10 @@
       case "finding": onFinding(parsed.data); break;
       case "error": {
         var ed = parsed.data || {};
-        if (ed.scope === "fatal"){
-          showBanner("fatal", ed.message || "A fatal error occurred.");
-        } else {
-          onWarnRow(ed);
-        }
+        var fatal = ed.scope === "fatal";
+        if (runRecord) runRecord.errors.push(ed);
+        if (fatal) showBanner("fatal", ed.message || "A fatal error occurred.");
+        onErrorRow(ed, fatal);
         break;
       }
       case "done": onDone(parsed.data); break;

@@ -44,6 +44,37 @@ BATCH_MAX_WAIT_SECS = 1200
 # ---- cache ----
 CACHE_TTL_SECS = 7 * 24 * 3600  # page_cache freshness window
 
+# ---- pricing (USD per 1M tokens: input, output) ----
+# List prices as of 2026-08. Cache reads bill at ~0.1x input, cache writes at
+# ~1.25x input (5-minute TTL). Sonnet 5 has intro pricing ($2/$10) through
+# 2026-08-31; the list price is used here so estimates don't silently change.
+MODEL_PRICES = {
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-5": (3.00, 15.00),
+    "claude-opus-5": (5.00, 25.00),
+}
+CACHE_READ_MULT = 0.1
+CACHE_WRITE_MULT = 1.25
+
+
+def estimate_cost_usd(tokens_by_model):
+    """Estimated USD cost of a run from its per-model token tallies:
+    {model_id: {input, output, cache_read, cache_write}}. Models with no
+    price entry contribute 0 (better to under-report than to guess)."""
+    total = 0.0
+    for model, tok in (tokens_by_model or {}).items():
+        prices = MODEL_PRICES.get(model)
+        if not prices:
+            continue
+        in_price, out_price = prices
+        total += (
+            (tok.get("input", 0) or 0) * in_price
+            + (tok.get("output", 0) or 0) * out_price
+            + (tok.get("cache_read", 0) or 0) * in_price * CACHE_READ_MULT
+            + (tok.get("cache_write", 0) or 0) * in_price * CACHE_WRITE_MULT
+        ) / 1_000_000
+    return round(total, 4)
+
 # ---- tiering thresholds ----
 TRIAGE_ESCALATE_MIN_CONFIDENCE = 0.5
 TRIAGE_ESCALATE_SEVERITIES = {"serious", "critical"}

@@ -57,10 +57,13 @@ def _escalates(item: dict) -> bool:
     return conf >= config.TRIAGE_ESCALATE_MIN_CONFIDENCE or sev in config.TRIAGE_ESCALATE_SEVERITIES
 
 
-def _add_usage(stats: dict, usage: dict) -> None:
-    tok = stats["tokens"]
+def _add_usage(stats: dict, usage: dict, model: str) -> None:
+    per_model = stats["tokens_by_model"].setdefault(
+        model, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
     for k in ("input", "output", "cache_read", "cache_write"):
-        tok[k] += usage.get(k, 0) or 0
+        n = usage.get(k, 0) or 0
+        stats["tokens"][k] += n
+        per_model[k] += n
 
 
 async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
@@ -73,6 +76,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
         "pages": 0, "templates": 0, "cache_hits": 0,
         "findings_by_severity": {}, "duration_secs": 0,
         "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+        "tokens_by_model": {},
     }
     started = time.time()
 
@@ -180,7 +184,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
             for i, t in enumerate(triage_targets):
                 r = results.get(f"t{i}")
                 if r:
-                    _add_usage(stats, r.usage)
+                    _add_usage(stats, r.usage, config.MODEL_TIER1)
                     triage_verdicts[t["cache_key"]] = (r.parsed or {}).get("items", [])
         else:
             for t in triage_targets:
@@ -188,7 +192,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                     model=config.MODEL_TIER1, system_blocks=triage_rubric,
                     user_content=triage_user(t), max_tokens=config.TIER1_MAX_TOKENS,
                     thinking=config.TIER1_THINKING, json_schema=TRIAGE_SCHEMA)
-                _add_usage(stats, r.usage)
+                _add_usage(stats, r.usage, config.MODEL_TIER1)
                 triage_verdicts[t["cache_key"]] = (r.parsed or {}).get("items", [])
         yield {"type": "stage", "stage": "triage", "status": "end"}
 
@@ -235,7 +239,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
         for t, r in deep_results:
             if not r:
                 continue
-            _add_usage(stats, r.usage)
+            _add_usage(stats, r.usage, config.MODEL_TIER2)
             for df in (r.parsed or {}).get("findings", []):
                 finding = {
                     "url": t["url"], "pipeline": _pipeline_of(df, t),
@@ -257,6 +261,7 @@ async def run_page_pipeline(run_id: str, seed_url: str, spec: dict):
                      t["tier0"], t["findings"], 0)
     yield {"type": "stage", "stage": "persist", "status": "end"}
 
+    stats["estimated_cost_usd"] = config.estimate_cost_usd(stats["tokens_by_model"])
     stats["duration_secs"] = round(time.time() - started, 2)
     db.finish_run(run_id, "done", stats)
     yield {"type": "done", "run_id": run_id, "status": "done", "stats": stats}

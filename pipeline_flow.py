@@ -85,7 +85,8 @@ async def run_flow_pipeline(run_id: str, flow_spec: dict):
 
     stats = {"steps": 0, "screenshots": 0, "findings_by_severity": {},
              "duration_secs": 0,
-             "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}}
+             "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+             "tokens_by_model": {}}
     started = time.time()
 
     def _tally(f):
@@ -155,8 +156,13 @@ async def run_flow_pipeline(run_id: str, flow_spec: dict):
                             user_content=user_content,
                             max_tokens=config.VISION_MAX_TOKENS,
                             effort=config.TIER2_EFFORT, json_schema=DEEP_REVIEW_SCHEMA)
+            vision_tok = stats["tokens_by_model"].setdefault(
+                config.MODEL_TIER2,
+                {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
             for k in ("input", "output", "cache_read", "cache_write"):
-                stats["tokens"][k] += r.usage.get(k, 0) or 0
+                n = r.usage.get(k, 0) or 0
+                stats["tokens"][k] += n
+                vision_tok[k] += n
             for df in (r.parsed or {}).get("findings", []):
                 finding = {
                     "url": cap["label"], "pipeline": "ux", "tier": 2,
@@ -170,6 +176,7 @@ async def run_flow_pipeline(run_id: str, flow_spec: dict):
                 yield _finding_event(finding, fid)
         yield {"type": "stage", "stage": "ux_review", "status": "end"}
 
+    stats["estimated_cost_usd"] = config.estimate_cost_usd(stats["tokens_by_model"])
     stats["duration_secs"] = round(time.time() - started, 2)
     db.finish_run(run_id, "done", stats)
     yield {"type": "done", "run_id": run_id, "status": "done", "stats": stats}
