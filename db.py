@@ -174,6 +174,99 @@ def run_summary(run_id):
     return d
 
 
+def list_runs(limit=200):
+    """Newest-first run summaries for the history page, each annotated with
+    per-severity finding counts and the distinct-URL count (the pages
+    fallback when stats never landed)."""
+    with _lock:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM runs "
+            "ORDER BY COALESCE(finished_at, started_at) DESC, id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        sev_rows = conn.execute(
+            "SELECT run_id, severity, COUNT(*) AS n FROM findings "
+            "GROUP BY run_id, severity"
+        ).fetchall()
+        url_rows = conn.execute(
+            "SELECT run_id, COUNT(DISTINCT url) AS n FROM findings GROUP BY run_id"
+        ).fetchall()
+    counts = {}
+    for r in sev_rows:
+        counts.setdefault(r["run_id"], {})[r["severity"]] = r["n"]
+    urls = {r["run_id"]: r["n"] for r in url_rows}
+    out = []
+    for row in rows:
+        d = dict(row)
+        d["spec"] = json.loads(d["spec"]) if d["spec"] is not None else None
+        d["stats"] = json.loads(d["stats"]) if d["stats"] is not None else None
+        d["severity_counts"] = counts.get(d["id"], {})
+        d["distinct_urls"] = urls.get(d["id"], 0)
+        out.append(d)
+    return out
+
+
+def delete_run(run_id):
+    """Delete a run and its findings. Returns True if the run existed."""
+    with _lock:
+        conn = _get_conn()
+        cur = conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        conn.execute("DELETE FROM findings WHERE run_id = ?", (run_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def replace_run(summary, findings):
+    """Upsert a whole run (the history import path): the run row is replaced
+    keyed on id and its findings are swapped wholesale, so re-importing the
+    same export refreshes instead of duplicating. Returns True when the run
+    id was new, False when an existing run was refreshed."""
+    run_id = summary["id"]
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        existed = (
+            conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone()
+            is not None
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO runs (id, kind, target, spec, status, "
+            "started_at, finished_at, stats, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                summary.get("kind"),
+                summary.get("target"),
+                json.dumps(summary["spec"]) if summary.get("spec") is not None else None,
+                summary.get("status"),
+                summary.get("started_at"),
+                summary.get("finished_at"),
+                json.dumps(summary["stats"]) if summary.get("stats") is not None else None,
+                summary.get("error"),
+            ),
+        )
+        conn.execute("DELETE FROM findings WHERE run_id = ?", (run_id,))
+        for f in findings:
+            conn.execute(
+                "INSERT INTO findings (run_id, url, pipeline, tier, rule, severity, "
+                "title, detail, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    f.get("url"),
+                    f.get("pipeline"),
+                    f.get("tier"),
+                    f.get("rule"),
+                    f.get("severity"),
+                    f.get("title"),
+                    f.get("detail"),
+                    json.dumps(f.get("evidence")),
+                    now,
+                ),
+            )
+        conn.commit()
+    return not existed
+
+
 # ---------------------------------------------------------------------
 # findings
 # ---------------------------------------------------------------------

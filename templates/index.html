@@ -116,6 +116,13 @@
   .tally-pill[data-sev="info"].lit{border-color:var(--sev-info);background:var(--sev-info-bg);color:var(--sev-info);}
   .tally-pill.lit .tc{color:inherit;}
 
+  .topbar-link{
+    font-size:12.5px;font-weight:600;color:var(--text-dim);text-decoration:none;
+    padding:5px 10px;border-radius:7px;white-space:nowrap;
+    transition:color .15s,background .15s;
+  }
+  .topbar-link:hover{color:var(--accent-strong);background:var(--accent-dim);}
+
   /* ---------- layout ---------- */
   .layout{
     max-width:1280px;margin:0 auto;padding:20px;
@@ -374,6 +381,7 @@
     transition:color .15s,border-color .15s;
   }
   .export-btn:hover{color:var(--accent-strong);border-color:var(--accent);}
+  a.export-btn{text-decoration:none;display:inline-flex;align-items:center;}
 
   @media (max-width:900px){
     .layout{grid-template-columns:1fr;}
@@ -402,6 +410,7 @@
         <div class="tally-pill" data-sev="minor"><span class="tc" data-count>0</span>Minor</div>
         <div class="tally-pill" data-sev="info"><span class="tc" data-count>0</span>Info</div>
       </div>
+      <a class="topbar-link" href="/runs">History</a>
     </div>
   </header>
 
@@ -762,9 +771,13 @@
     var csvBtn = h("button", {class:"export-btn", type:"button", text:"Export CSV"});
     jsonBtn.addEventListener("click", exportJSON);
     csvBtn.addEventListener("click", exportCSV);
+    var actions = [jsonBtn, csvBtn];
+    if (data.run_id){
+      actions.push(h("a", {class:"export-btn", href:"/runs/" + encodeURIComponent(String(data.run_id)), text:"View in history"}));
+    }
     var head = h("div", {class:"done-bar-head"}, [
       h("span", {class:"db-status" + (isError ? " status-error" : "")}, [(isError ? "✕ " : "✓ ") + "Run " + status]),
-      h("div", {class:"db-actions"}, [jsonBtn, csvBtn])
+      h("div", {class:"db-actions"}, actions)
     ]);
     doneBar.appendChild(head);
 

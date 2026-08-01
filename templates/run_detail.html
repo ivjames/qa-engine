@@ -1,0 +1,157 @@
+{% extends "_runs_base.html" %}
+{% block title %}{{ run.target or run.id }}{% endblock %}
+{% block styles %}
+  .detail-head{display:flex;flex-direction:column;gap:10px;}
+  .detail-head .dh-top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;}
+  .detail-head h1{
+    font-size:19px;font-weight:700;line-height:1.3;min-width:0;flex:1;
+    overflow-wrap:anywhere;
+  }
+  .detail-head .dh-actions{display:flex;gap:8px;flex:0 0 auto;}
+  .back-link{font-size:12px;color:var(--text-dim);text-decoration:none;}
+  .back-link:hover{color:var(--accent-strong);}
+  .dh-sevs{display:flex;gap:6px;flex-wrap:wrap;}
+
+  .issues-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .issues-head b{font-size:14px;}
+  .issues-head .ih-hint{font-size:11.5px;color:var(--text-faint);}
+
+  .g-card{
+    border-radius:9px;padding:13px 14px 12px 13px;
+    background:var(--panel-2);border:1px solid var(--border);
+    border-left:3px solid var(--sev-minor);
+  }
+  .g-card + .g-card{margin-top:8px;}
+  .g-card[data-sev="critical"]{border-left-color:var(--sev-critical);}
+  .g-card[data-sev="serious"]{border-left-color:var(--sev-serious);}
+  .g-card[data-sev="moderate"]{border-left-color:var(--sev-moderate);}
+  .g-card[data-sev="minor"]{border-left-color:var(--sev-minor);}
+  .g-card[data-sev="info"]{border-left-color:var(--sev-info);}
+  .g-badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+  .g-badges .g-count{margin-left:auto;font-size:11px;color:var(--text-faint);font-family:var(--font-mono);}
+  .g-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;line-height:1.4;}
+  .g-detail{font-size:13px;color:var(--text-dim);line-height:1.55;margin-bottom:6px;white-space:pre-wrap;}
+
+  details.g-pages{margin-top:6px;}
+  details.g-pages summary{
+    cursor:pointer;font-size:11.5px;color:var(--accent-strong);font-weight:600;
+    list-style:none;display:flex;align-items:center;gap:5px;user-select:none;
+  }
+  details.g-pages summary::-webkit-details-marker{display:none;}
+  details.g-pages summary::before{content:"▸";font-size:10px;transition:transform .15s;}
+  details.g-pages[open] summary::before{transform:rotate(90deg);}
+  .occ-list{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px;}
+  .occ-list li{
+    font-size:12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  }
+  .occ-list a{font-family:var(--font-mono);font-size:11.5px;overflow-wrap:anywhere;}
+  .occ-ev{color:var(--text-faint);font-size:11px;}
+  details.g-raw{margin-top:8px;}
+  details.g-raw summary{
+    cursor:pointer;font-size:11px;color:var(--text-faint);font-weight:600;
+    list-style:none;user-select:none;
+  }
+  details.g-raw summary::-webkit-details-marker{display:none;}
+  details.g-raw pre{
+    margin:8px 0 0;padding:10px 12px;background:var(--bg-1);border:1px solid var(--border);
+    border-radius:7px;font-size:11.5px;line-height:1.5;color:var(--text-dim);
+    max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  }
+{% endblock %}
+{% block main %}
+
+  <a class="back-link" href="/runs">← All runs</a>
+
+  {% if saved == 'new' %}
+  <div class="banner ok"><span class="b-icon">✓</span><span>Report imported.</span></div>
+  {% elif saved == 'updated' %}
+  <div class="banner ok"><span class="b-icon">✓</span><span>Report updated (same run id re-imported).</span></div>
+  {% endif %}
+
+  <div class="panel detail-head">
+    <div class="dh-top">
+      <h1>{{ run.target or "QA run" }}</h1>
+      <div class="dh-actions">
+        <a class="btn" href="/runs/{{ run.id }}/export.json">Export JSON</a>
+        <form method="post" action="/runs/{{ run.id }}/delete"
+              onsubmit="return confirm('Delete this run and its findings?');">
+          <button class="btn danger" type="submit">Delete run</button>
+        </form>
+      </div>
+    </div>
+    <div class="meta-line">
+      {% if run.kind %}<span class="rm-kind">{{ run.kind }}</span>{% endif %}
+      <span>started {{ run.started_at|ts }}</span>
+      <span class="sep">·</span>
+      <span>finished {{ run.finished_at|ts }}</span>
+      <span class="sep">·</span>
+      <span>{{ pages }} page{{ '' if pages == 1 else 's' }}</span>
+      {% set dur = (run.stats or {}).get('duration_secs') %}
+      {% if dur is number %}
+      <span class="sep">·</span>
+      <span>{{ dur|round|int }}s scan</span>
+      {% endif %}
+      {% if run.status %}
+      <span class="sep">·</span>
+      <span>status {{ run.status }}</span>
+      {% endif %}
+      <span class="sep">·</span>
+      <span class="rm-id">#{{ run.id }}</span>
+    </div>
+    <div class="dh-sevs">
+      {% set ns = namespace(any=false) %}
+      {% for sev in SEVERITIES %}
+        {% set n = counts.get(sev, 0) %}
+        {% if n %}
+          {% set ns.any = true %}
+          <span class="sev-pill" data-sev="{{ sev }}"><span class="n">{{ n }}</span>{{ sev }}</span>
+        {% endif %}
+      {% endfor %}
+      {% if not ns.any %}<span class="sev-none">no findings</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="issues-head">
+    <b>{{ groups|length }} distinct issue{{ '' if groups|length == 1 else 's' }}</b>
+    <span class="ih-hint">Grouped by rule across all scanned pages, worst severity first.</span>
+  </div>
+
+  {% if groups %}
+    {% for g in groups %}
+    <div class="g-card" data-sev="{{ g.severity }}">
+      <div class="g-badges">
+        <span class="f-badge sev" data-sev="{{ g.severity }}">{{ g.severity }}</span>
+        {% if g.pipeline %}
+        <span class="f-badge pipe" data-pipe="{{ g.pipeline }}"><span class="f-dot"></span>{{ g.pipeline }}</span>
+        {% endif %}
+        <span class="f-badge"><code>{{ g.rule }}</code></span>
+        <span class="g-count">{{ g.occurrences|length }} page{{ '' if g.occurrences|length == 1 else 's' }}</span>
+      </div>
+      <div class="g-title">{{ g.title }}</div>
+      {% if g.detail %}<div class="g-detail">{{ g.detail }}</div>{% endif %}
+      <details class="g-pages">
+        <summary>Affected pages ({{ g.occurrences|length }})</summary>
+        <ul class="occ-list">
+          {% for o in g.occurrences %}
+          <li>
+            <a href="{{ o.url }}" rel="noopener">{{ o.url|pathof }}</a>
+            {% if o.severity != g.severity %}
+            <span class="f-badge sev" data-sev="{{ o.severity }}">{{ o.severity }}</span>
+            {% endif %}
+            {% set ev = o.evidence|evsum %}
+            {% if ev %}<span class="occ-ev">{{ ev }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        <details class="g-raw">
+          <summary>Raw evidence (JSON)</summary>
+          <pre>{{ g.raw_json }}</pre>
+        </details>
+      </details>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="panel"><p class="empty-hint">This run recorded no findings.</p></div>
+  {% endif %}
+
+{% endblock %}
