@@ -86,6 +86,19 @@ def run_flow():
     return _sse_response(sse_flow(flow))
 
 
+@app.post("/api/run/repo")
+def run_repo():
+    from pipelines.repo import sse_repo
+    body = request.get_json(silent=True) or {}
+    repo = (body.get("repo") or "").strip()
+    if not repo:
+        return jsonify({"error": "missing 'repo'"}), 400
+    branch = (body.get("branch") or "main").strip() or "main"
+    base = (body.get("base") or "").strip() or None
+    spec = body.get("spec") or {}
+    return _sse_response(sse_repo(repo, branch, base, spec))
+
+
 # ---------------------------------------------------------------------
 # run history
 # ---------------------------------------------------------------------

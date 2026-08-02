@@ -49,6 +49,34 @@ TRIAGE_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Tier-1 repo triage output (Haiku). Matches rubrics/repo-triage.md: one item
+# per file the model thinks is worth (or not worth) a deep review.
+REPO_TRIAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "worth_deep_review": {"type": "boolean"},
+                    "severity": {"type": "string", "enum": _SEVERITY_ENUM},
+                    "confidence": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "path", "worth_deep_review", "severity",
+                    "confidence", "reason",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["items"],
+    "additionalProperties": False,
+}
+
 # Tier-2 deep-review / vision output (Sonnet). Wrapped in an object (top-level
 # arrays are avoided for structured output portability).
 DEEP_REVIEW_SCHEMA = {

@@ -333,6 +333,7 @@
   .f-badge.pipe[data-pipe="wcag"] .f-dot{background:#a78bfa;}
   .f-badge.pipe[data-pipe="security"] .f-dot{background:var(--accent);}
   .f-badge.pipe[data-pipe="ux"] .f-dot{background:#f472b6;}
+  .f-badge.pipe[data-pipe="code"] .f-dot{background:#34d399;}
 
   .f-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;line-height:1.4;}
   .f-detail{font-size:13px;color:var(--text-dim);line-height:1.55;margin-bottom:6px;white-space:pre-wrap;}
@@ -423,6 +424,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="page" type="button">Page run</button>
           <button class="tab" data-tab="flow" type="button">Flow run</button>
+          <button class="tab" data-tab="repo" type="button">Repo run</button>
         </div>
 
         <div class="tab-panel" id="panel-page">
@@ -441,6 +443,15 @@
     {"action": "screenshot", "name": "home"}
   ]
 }</textarea>
+        </div>
+
+        <div class="tab-panel hidden" id="panel-repo">
+          <label class="field-label" for="repoSpec">Repository (owner/name, URL, or path)</label>
+          <input id="repoSpec" type="text" placeholder="ivjames/qa-ksink-site" value="ivjames/qa-ksink-site" autocomplete="off">
+          <label class="field-label" for="repoBranch">Branch to scan</label>
+          <input id="repoBranch" type="text" placeholder="bug-lab" value="bug-lab" autocomplete="off">
+          <label class="field-label" for="repoBase">Base branch (optional — enables diff mode)</label>
+          <input id="repoBase" type="text" placeholder="main" value="main" autocomplete="off">
         </div>
 
         <button class="run-btn" id="runBtn" type="button">
@@ -554,6 +565,7 @@
       document.querySelectorAll(".tab").forEach(function(b){ b.classList.toggle("active", b === btn); });
       document.getElementById("panel-page").classList.toggle("hidden", activeTab !== "page");
       document.getElementById("panel-flow").classList.toggle("hidden", activeTab !== "flow");
+      document.getElementById("panel-repo").classList.toggle("hidden", activeTab !== "repo");
     });
   });
 
@@ -977,6 +989,20 @@
       url = "/api/run/page";
       body = { url: seedUrl };
       setRunMeta("page", seedUrl, null);
+    } else if (kind === "repo"){
+      var repoSpec = (document.getElementById("repoSpec").value || "").trim();
+      if (!repoSpec){
+        showBanner("fatal", "Enter a repository to start a repo run.");
+        setRunning(false);
+        currentController = null;
+        return;
+      }
+      var repoBranch = (document.getElementById("repoBranch").value || "").trim() || "main";
+      var repoBase = (document.getElementById("repoBase").value || "").trim();
+      url = "/api/run/repo";
+      body = { repo: repoSpec, branch: repoBranch };
+      if (repoBase) body.base = repoBase;
+      setRunMeta("repo", repoSpec + "@" + repoBranch + (repoBase ? " vs " + repoBase : ""), null);
     } else {
       var flow;
       try {

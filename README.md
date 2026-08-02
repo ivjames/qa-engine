@@ -27,13 +27,24 @@ DOM-digest, so re-running an unchanged page replays its findings with zero model
 calls; the crawler **deduplicates templates** so 100 product pages cost one
 review, not a hundred; multi-page runs use the **Batch API** for throughput.
 
-## Two pipelines
+## Three pipelines
 
 - **Page** (`POST /api/run/page`, body `{"url": "..."}`) — crawls the site and
   runs Security + WCAG.
 - **Flow** (`POST /api/run/flow`, body `{"flow": {start_url, name, steps:[…]}}`)
   — drives a scripted flow in a real browser, capturing downscaled screenshots,
   and runs the UX heuristic review.
+- **Repo** (`POST /api/run/repo`, body `{"repo": "owner/name", "branch":
+  "bug-lab", "base": "main"}`) — clones a branch and reviews the *source*:
+  Tier 0 runs deterministic scanners (secret patterns, conflict markers,
+  breakpoints, shell/eval/pickle/SQL-interpolation/TLS-off risk surfaces),
+  Haiku triages which files deserve deep review, and Sonnet code-reviews
+  those files. With `base` set it runs in **diff mode**: only files changed
+  since the merge base are candidates and the reviewer reads each file's
+  unified diff as before-vs-after — pointed at a seeded-regression branch
+  (the QA KSink `bug-lab`), it comes back with the seeded bugs. `repo`
+  accepts `owner/name` (GitHub), a full URL, or a local path; the engine
+  only clones and reads — it never executes repo code.
 
 Both stream results live over **Server-Sent Events**; the single-page UI
 (`templates/index.html`) renders a live stage tracker and severity-coded finding
@@ -47,13 +58,17 @@ config.py           every cost knob (models, token caps, crawl budget, cache TTL
 db.py               SQLite: runs, findings, content-hash page_cache
 digest.py           HTML -> semantic skeleton (+ shape/content hashes)
 crawler.py          Playwright BFS crawler with template dedup
+repo_scan.py        git plumbing: clone/branch/merge-base diff + file inventory
 models.py           Anthropic wrapper: prompt caching + Batch API + mock mode
 tier0/security.py   headers / TLS / secret scanning
+tier0/repo.py       deterministic source checks (reuses the secret scanner)
 tier0/wcag.py       axe-core injection (vendored axe.min.js)
 tier0/ux.py         Lighthouse subprocess (graceful-skip when unavailable)
-rubrics/            triage.md, wcag.md, owasp.md, nielsen.md (cached system prompts)
+rubrics/            triage.md, wcag.md, owasp.md, nielsen.md,
+                    repo-triage.md, code.md (cached system prompts)
 pipeline_page.py    crawl -> tier0 -> cache -> triage -> deep review
 pipeline_flow.py    drive flow -> capture (Pillow downscale) -> vision review
+pipeline_repo.py    clone/diff -> tier0 scan -> triage files -> code review
 pipelines/          thin SSE adapters (framing + heartbeats)
 templates/index.html  the UI
 ecosystem.config.cjs  pm2 (fork mode, gunicorn gthread)
@@ -81,6 +96,7 @@ whole system with no key.
 .venv/bin/python -m pytest tests/unit -q          # unit tests
 MOCK_MODELS=1 .venv/bin/python -m tests.smoke_page   # end-to-end page run
 MOCK_MODELS=1 .venv/bin/python -m tests.smoke_flow   # end-to-end flow run
+MOCK_MODELS=1 .venv/bin/python -m tests.smoke_repo   # end-to-end repo run
 ```
 
 ## Deploying

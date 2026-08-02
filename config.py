@@ -36,6 +36,14 @@ MAX_TEMPLATES = _env_int("QA_MAX_TEMPLATES", 12)  # distinct templates sent to L
 CRAWL_CONCURRENCY = 3
 NAV_TIMEOUT_MS = 15000
 
+# ---- repo pipeline budget ----
+REPO_MAX_FILES = _env_int("QA_REPO_MAX_FILES", 400)   # inventory cap per run
+REPO_MAX_FILE_BYTES = 200_000     # larger files are inventoried, never scanned
+REPO_MAX_FILE_CHARS = 24_000      # per-file content budget for deep review
+REPO_MAX_DIFF_CHARS = 30_000      # full-diff budget for triage (else per-file stat)
+REPO_MAX_DEEP_FILES = _env_int("QA_REPO_MAX_DEEP_FILES", 8)  # deep-review cap
+REPO_GIT_TIMEOUT_SECS = 180
+
 # ---- batch API ----
 BATCH_THRESHOLD = 8         # > this many units in a stage -> use Batch API
 BATCH_POLL_SECS = 5
