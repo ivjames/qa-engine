@@ -72,7 +72,7 @@ pipeline_repo.py    clone/diff -> tier0 scan -> triage files -> code review
 pipelines/          thin SSE adapters (framing + heartbeats)
 templates/index.html  the UI
 ecosystem.config.cjs  pm2 (fork mode, gunicorn gthread)
-bin/qa-engine       operate CLI (redeploy/restart/logs/backup)
+bin/qa-engine       operate CLI (deploy/restart/logs/status/backup)
 ```
 
 ## Running locally
