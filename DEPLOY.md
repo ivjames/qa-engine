@@ -27,11 +27,11 @@ python3 -m venv .venv
 # 3. Node side: Lighthouse.
 npm install
 
-# 4. Env. provision-site already seeded PORT=8044 into .env.
-#    ANTHROPIC_API_KEY comes from /etc/environment on this droplet — make sure
-#    pm2 inherits it. Either export it before `pm2 start`, or add it to .env:
-grep -q ANTHROPIC_API_KEY .env || \
-  echo "ANTHROPIC_API_KEY=$(. /etc/environment; echo "$ANTHROPIC_API_KEY")" >> .env
+# 4. Env. provision-site already seeded PORT=8044 into .env. Add the key
+#    with an editor (see "Environment / config" below) and lock the file down.
+#    config.py reads .env itself on start; nothing is inherited from the shell.
+${EDITOR:-nano} .env        # add: ANTHROPIC_API_KEY=sk-ant-...
+chmod 600 .env
 
 # 5. Start under pm2 (fork mode via ecosystem.config.cjs) and persist.
 pm2 start ecosystem.config.cjs
@@ -99,13 +99,34 @@ qa-engine backup        # tar data/qa.db + screenshots into data/backups/
 
 ## Environment / config
 
-Everything tunable lives in `config.py`, overridable via env (`.env`):
+Everything tunable lives in `config.py`, overridable via the environment.
+`config.py` loads **`/var/www/qa-engine/.env`** itself at import time (plain
+`KEY=value` lines, `#` comments, optional `export `, single or double quotes;
+values are never expanded or executed), so pm2-managed and hand runs read the
+same file. A variable already set in the process environment wins over the
+file. `QA_ENV_FILE=/path` points the loader elsewhere (tests use this).
 
+- `ANTHROPIC_API_KEY` — **lives only in `/var/www/qa-engine/.env`, mode 600.**
+  It is not in `/etc/environment` and pm2 does not inherit it from a login
+  shell (both were closed off 2026-09-05); each app's own `.env` is the only
+  copy of any key it uses. Write it with an editor, then `chmod 600 .env` and
+  `qa-engine restart` (or `qa-engine redeploy`) — the file is read at process
+  start, so an edit does nothing until the restart. `.env` is gitignored and
+  survives a redeploy.
+
+  **Without it the app runs in mock-model mode and keeps serving**: Tier 0
+  (axe/security/Lighthouse), crawling, digests, the cache, and SSE all work
+  for real; the Haiku/Sonnet tiers return canned results. Good for a smoke
+  test, not for real reviews. It says so in two places — `GET /healthz`
+  returns `{"status": "ok", "mock_models": true}` (`false` once the key is
+  read), and every deep-review finding's text starts with `[mock] deep
+  review: no findings (mock mode, no API key configured).` There is no banner
+  in the UI, so check `/healthz` after any restart:
+
+  ```bash
+  curl -s https://qa-engine.lab980.com/healthz    # expect "mock_models": false
+  ```
 - `PORT` — local bind port (8044).
-- `ANTHROPIC_API_KEY` — from `/etc/environment`. **If unset, the app runs in
-  mock-model mode**: Tier 0 (axe/security/Lighthouse), crawling, digests, the
-  cache, and SSE all work for real; the Haiku/Sonnet tiers return canned
-  results. Good for a smoke test, not for real reviews.
 - `MOCK_MODELS=1` — force mock mode even with a key present.
 - `CHROME_PATH` — Chrome binary for Lighthouse; blank auto-detects Playwright's
   chromium.

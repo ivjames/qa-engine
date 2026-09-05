@@ -5,6 +5,72 @@ import os
 import glob as _glob
 
 
+# ---- .env ----------------------------------------------------------------
+# The app dir's .env is the only copy of any key this app uses (the droplet's
+# /etc/environment no longer carries them, and pm2 is registered from a
+# scrubbed environment). Load it into os.environ here, before any
+# os.environ.get below runs, so config, models.py (anthropic.Anthropic() reads
+# ANTHROPIC_API_KEY from the environment), and subprocess env copies all see
+# the same values. Values already in the process environment win over the
+# file, matching python-dotenv's default. QA_ENV_FILE overrides the path.
+
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.environ.get("QA_ENV_FILE") or os.path.join(_APP_DIR, ".env")
+
+
+def _is_env_key(key):
+    return bool(key) and not key[0].isdigit() and all(c.isalnum() or c == "_" for c in key)
+
+
+def parse_env_file(text):
+    """Parse KEY=value lines into a dict. Blank lines and `#` comments are
+    skipped, a leading `export ` is tolerated, CRLF is tolerated, and a value
+    may be wrapped in single or double quotes (which are removed; nothing
+    inside them is unescaped or expanded). An unquoted value ends at the
+    first ` #`. Values are never expanded, substituted, or executed.
+    Malformed lines are ignored rather than raising."""
+    out = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not _is_env_key(key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        out[key] = value
+    return out
+
+
+def load_env_file(path=None, environ=None):
+    """Read `path` (default ENV_FILE) and setdefault each KEY into `environ`
+    (default os.environ): keys already present are left alone. A missing or
+    unreadable file is fine and loads nothing. Returns the keys it set."""
+    path = path or ENV_FILE
+    environ = os.environ if environ is None else environ
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return []
+    loaded = []
+    for key, value in parse_env_file(text).items():
+        if key not in environ:
+            environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
+ENV_FILE_LOADED = load_env_file()
+
+
 def _env_int(name, default):
     try:
         return int(os.environ.get(name, "") or default)
@@ -103,6 +169,8 @@ LIGHTHOUSE_SCORE_SERIOUS = 0.5   # category score below -> serious
 LIGHTHOUSE_SCORE_MODERATE = 0.9  # category score below -> moderate
 
 # ---- mock / keyless mode ----
+# Surfaces as {"mock_models": true} on /healthz and as "[mock] ..." review
+# text in findings; see DEPLOY.md. ANTHROPIC_API_KEY may come from .env above.
 MOCK_MODELS = os.environ.get("MOCK_MODELS", "") == "1" or not os.environ.get("ANTHROPIC_API_KEY")
 
 
