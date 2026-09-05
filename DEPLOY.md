@@ -27,11 +27,11 @@ python3 -m venv .venv
 # 3. Node side: Lighthouse.
 npm ci
 
-# 4. Env. provision-site already seeded PORT=8044 into .env. Add the model key
-#    there too: there is no box-level key store (the droplet's shell carries
-#    no API key), and .env is the only copy the app is meant to have.
-#    Mode 600; see "Environment / config" below for what the app reads today.
-$EDITOR .env
+# 4. Env. provision-site already seeded PORT=8044 into .env. Add the key
+#    with an editor (see "Environment / config" below) and lock the file down.
+#    config.py reads .env itself on start; nothing is inherited from the shell.
+${EDITOR:-nano} .env        # add: ANTHROPIC_API_KEY=sk-ant-...
+chmod 600 .env
 
 # 5. Put the operate CLI on PATH, then let its first deploy do the first
 #    `pm2 start` (from ecosystem.config.cjs, scrubbed environment), probe, save.
@@ -136,22 +136,34 @@ Overrides: `QA_ENGINE_FQDN`, `QA_ENGINE_BRANCH` (default `main`),
 
 ## Environment / config
 
-Everything tunable lives in `config.py`, overridable via env (`.env`):
+Everything tunable lives in `config.py`, overridable via the environment.
+`config.py` loads **`/var/www/qa-engine/.env`** itself at import time (plain
+`KEY=value` lines, `#` comments, optional `export `, single or double quotes;
+values are never expanded or executed), so pm2-managed and hand runs read the
+same file. A variable already set in the process environment wins over the
+file. `QA_ENV_FILE=/path` points the loader elsewhere (tests use this).
 
+- `ANTHROPIC_API_KEY` — **lives only in `/var/www/qa-engine/.env`, mode 600.**
+  It is not in `/etc/environment` and pm2 does not inherit it from a login
+  shell (both were closed off 2026-09-05); each app's own `.env` is the only
+  copy of any key it uses. Write it with an editor, then `chmod 600 .env` and
+  `qa-engine restart` (or `qa-engine redeploy`) — the file is read at process
+  start, so an edit does nothing until the restart. `.env` is gitignored and
+  survives a redeploy.
+
+  **Without it the app runs in mock-model mode and keeps serving**: Tier 0
+  (axe/security/Lighthouse), crawling, digests, the cache, and SSE all work
+  for real; the Haiku/Sonnet tiers return canned results. Good for a smoke
+  test, not for real reviews. It says so in two places — `GET /healthz`
+  returns `{"status": "ok", "mock_models": true}` (`false` once the key is
+  read), and every deep-review finding's text starts with `[mock] deep
+  review: no findings (mock mode, no API key configured).` There is no banner
+  in the UI, so check `/healthz` after any restart:
+
+  ```bash
+  curl -s https://qa-engine.lab980.com/healthz    # expect "mock_models": false
+  ```
 - `PORT` — local bind port (8044).
-- `ANTHROPIC_API_KEY` — **If unset, the app runs in mock-model mode**: Tier 0 (axe/security/Lighthouse), crawling, digests, the
-  cache, and SSE all work for real; the Haiku/Sonnet tiers return canned
-  results. Good for a smoke test, not for real reviews.
-
-  Where it comes from: `.env` in the app dir is the only copy on the box —
-  there is no `/etc/environment` key store any more, and the CLI launches pm2
-  from a scrubbed environment carrying only `PORT`. **Caveat, as of this
-  writing:** `config.py` reads `os.environ` only and does not load `.env`
-  itself (there is no `python-dotenv`), so a key placed in `.env` does not
-  reach gunicorn yet and the model tiers run mocked in production. Making the
-  app read its own `.env` is an app change (the lab980 rule: a variable the app
-  needs but does not read from `.env` is not an argument for the CLI to pass);
-  until it lands, treat live reviews as mock-tier.
 - `MOCK_MODELS=1` — force mock mode even with a key present.
 - `CHROME_PATH` — Chrome binary for Lighthouse; blank auto-detects Playwright's
   chromium.

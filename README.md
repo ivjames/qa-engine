@@ -81,11 +81,13 @@ bin/qa-engine       operate CLI (deploy/restart/logs/status/backup)
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/playwright install chromium
 npm install                     # Lighthouse (optional; UX tier degrades without it)
-export ANTHROPIC_API_KEY=...     # omit to run in mock-model mode (Tier 0 still real)
+cp .env.example .env && $EDITOR .env   # set ANTHROPIC_API_KEY; config.py reads .env itself.
+                                # Leave it blank to run in mock-model mode (Tier 0 still real).
 .venv/bin/python app.py          # http://127.0.0.1:8044
 ```
 
-**Mock mode.** With no `ANTHROPIC_API_KEY` (or `MOCK_MODELS=1`), the crawler,
+**Mock mode.** With no `ANTHROPIC_API_KEY` in `.env` or the environment (or
+`MOCK_MODELS=1`), the crawler,
 Tier-0 scanners, digest, cache, screenshots, and SSE all run for real while the
 Haiku/Sonnet tiers return canned results — enough to exercise and smoke-test the
 whole system with no key.
