@@ -25,24 +25,28 @@ python3 -m venv .venv
 .venv/bin/playwright install --with-deps chromium
 
 # 3. Node side: Lighthouse.
-npm install
+npm ci
 
-# 4. Env. provision-site already seeded PORT=8044 into .env.
-#    ANTHROPIC_API_KEY comes from /etc/environment on this droplet — make sure
-#    pm2 inherits it. Either export it before `pm2 start`, or add it to .env:
-grep -q ANTHROPIC_API_KEY .env || \
-  echo "ANTHROPIC_API_KEY=$(. /etc/environment; echo "$ANTHROPIC_API_KEY")" >> .env
+# 4. Env. provision-site already seeded PORT=8044 into .env. Add the model key
+#    there too: there is no box-level key store (the droplet's shell carries
+#    no API key), and .env is the only copy the app is meant to have.
+#    Mode 600; see "Environment / config" below for what the app reads today.
+$EDITOR .env
 
-# 5. Start under pm2 (fork mode via ecosystem.config.cjs) and persist.
-pm2 start ecosystem.config.cjs
-pm2 save
-
-# 6. Put the operate CLI on PATH.
+# 5. Put the operate CLI on PATH, then let its first deploy do the first
+#    `pm2 start` (from ecosystem.config.cjs, scrubbed environment), probe, save.
 ln -sf /var/www/qa-engine/bin/qa-engine /usr/local/bin/qa-engine
+qa-engine deploy
 
-# 7. Smoke it.
+# 6. Smoke it.
 curl -s https://qa-engine.lab980.com/healthz
 ```
+
+Steps 2-3 are what `qa-engine deploy` repeats every time (it creates the venv
+if missing, `pip install`s, `npm ci`s, and installs Playwright's chromium only
+when its install location is absent), so on a fresh box you can skip them and
+go straight to step 5 — they are listed so the OS-level `--with-deps` run,
+which needs apt and is done once, is not forgotten.
 
 If the boot hook was never installed on this droplet, do it once (survives
 reboot): `pm2 startup systemd -u root --hp /root` then run the line it prints;
@@ -91,21 +95,63 @@ exemption.
 ## Redeploying
 
 ```bash
-qa-engine redeploy      # git pull -> pip install -> npm install -> playwright install -> pm2 restart
-qa-engine restart
-qa-engine logs
+qa-engine deploy        # fetch + reset --hard origin/main -> pip -> npm ci -> playwright chromium (if missing)
+                        #   -> pm2 start (first time) / restart -> probe -> pm2 save
+qa-engine restart       # pm2 restart + probe, no code change
+qa-engine status        # HEAD, pm2 state, local + public probe, cert days
+qa-engine logs          # tail pm2 logs (args pass through, e.g. -n 100)
 qa-engine backup        # tar data/qa.db + screenshots into data/backups/
 ```
+
+`redeploy` still works as an alias of `deploy`. `bin/qa-engine` is the merged
+lab980 app-CLI template with this site's steps folded in, so it behaves like
+every other `<stub>` on the box:
+
+- **Sync is `git fetch` + `git reset --hard origin/main`**, not a pull. A
+  tracked file edited on the droplet is destroyed silently on the next
+  deploy — fix it in the repo. `.env`, `.venv/`, `node_modules/` and `data/`
+  are gitignored and survive.
+- **First start comes from `ecosystem.config.cjs`** (`pm2 start
+  ecosystem.config.cjs --only qa-engine`) when nothing named `qa-engine` is
+  registered; every later deploy is `pm2 restart qa-engine`. The ecosystem
+  entry is the registration: `.venv/bin/gunicorn` with no interpreter, the
+  gthread / `--timeout 0` args bound to `127.0.0.1:8044`, fork mode,
+  `max_restarts: 10`, logs in `data/pm2-*.log`.
+- **Every pm2 call runs from a scrubbed environment** — `env -i` plus `PATH`,
+  `HOME`, `LANG`, `PM2_HOME`/`TERM` if set, and `PORT=8044`; never
+  `--update-env`. pm2 copies the environment of the `pm2 start` call into the
+  process and into `~/.pm2/dump.pm2`, so nothing exported in the shell that
+  ran `deploy` can reach the process or the dump.
+- **`deploy` fails, and saves nothing, when `127.0.0.1:8044` does not answer
+  HTTP** (any status code counts; up to `QA_ENGINE_PROBE_TRIES`, default 10,
+  tries a second apart). `pm2 save` runs only after that and only when every
+  registered pm2 process is `online` — otherwise it warns and leaves the
+  previous dump alone.
+- Must run as root with root's `HOME` (`sudo -i` / `su -`), because the pm2
+  daemon and dump are root's.
+
+Overrides: `QA_ENGINE_FQDN`, `QA_ENGINE_BRANCH` (default `main`),
+`QA_ENGINE_PORT` (default `8044`; the probe port — gunicorn's bind lives in
+`ecosystem.config.cjs`), `QA_ENGINE_PROBE_TRIES` (default `10`).
 
 ## Environment / config
 
 Everything tunable lives in `config.py`, overridable via env (`.env`):
 
 - `PORT` — local bind port (8044).
-- `ANTHROPIC_API_KEY` — from `/etc/environment`. **If unset, the app runs in
-  mock-model mode**: Tier 0 (axe/security/Lighthouse), crawling, digests, the
+- `ANTHROPIC_API_KEY` — **If unset, the app runs in mock-model mode**: Tier 0 (axe/security/Lighthouse), crawling, digests, the
   cache, and SSE all work for real; the Haiku/Sonnet tiers return canned
   results. Good for a smoke test, not for real reviews.
+
+  Where it comes from: `.env` in the app dir is the only copy on the box —
+  there is no `/etc/environment` key store any more, and the CLI launches pm2
+  from a scrubbed environment carrying only `PORT`. **Caveat, as of this
+  writing:** `config.py` reads `os.environ` only and does not load `.env`
+  itself (there is no `python-dotenv`), so a key placed in `.env` does not
+  reach gunicorn yet and the model tiers run mocked in production. Making the
+  app read its own `.env` is an app change (the lab980 rule: a variable the app
+  needs but does not read from `.env` is not an argument for the CLI to pass);
+  until it lands, treat live reviews as mock-tier.
 - `MOCK_MODELS=1` — force mock mode even with a key present.
 - `CHROME_PATH` — Chrome binary for Lighthouse; blank auto-detects Playwright's
   chromium.
@@ -121,4 +167,6 @@ Everything tunable lives in `config.py`, overridable via env (`.env`):
   `--timeout 0` so long crawls aren't killed.
 - **Node version.** Lighthouse 11 supports Node 18+, so it's fine on the
   droplet's Node 20 today and after the planned Node 22 bump. After a Node
-  upgrade, re-run `npm install` and `.venv/bin/playwright install chromium`.
+  upgrade, `qa-engine deploy` re-runs `npm ci` and re-checks the Playwright
+  chromium install location (a playwright version bump moves it, so the check
+  installs the new one).
