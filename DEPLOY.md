@@ -54,6 +54,19 @@ confirm `systemctl is-enabled pm2-root` → enabled.
 
 ## Locking it down (nginx basic auth — REQUIRED)
 
+> **Not applied. Verified from outside on 2026-09-07:**
+>
+> ```
+> GET https://qa-engine.lab980.com/         -> 200   (this section's own check expects 401)
+> GET https://qa-engine.lab980.com/runs     -> 200
+> GET https://qa-engine.lab980.com/healthz  -> 200   {"mock_models":false,"status":"ok"}
+> ```
+>
+> `"mock_models":false` means a real `ANTHROPIC_API_KEY` is loaded, so the
+> budget exposure described below is live rather than hypothetical. The gate is
+> an nginx change on the droplet and cannot be made from this repo. Until
+> someone runs the steps below on the box, treat this site as public.
+
 The app itself has **no auth**, and the hostname is not a secret: every TLS
 cert lands in public Certificate Transparency logs, so assume the subdomain is
 known to scanners. Unauthenticated, a visitor can spend Anthropic API budget
